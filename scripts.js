@@ -1,9 +1,9 @@
 let timer = null;
-let totalSegundos = 60 *30 ;
+let totalSegundos = 60 * 30;
 let segundosRestantes = totalSegundos;
 let sessoes = 5;
 let ciclos = 5;
-const MAX_CICLOS = 30; // exemplo: 30 ciclos = 15 horas de estudo com pausas
+const MAX_CICLOS = 30;
 const elCiclos = document.createElement('div');
 elCiclos.className = 'sessions-count';
 document.querySelector('.sessions').appendChild(elCiclos);
@@ -29,6 +29,13 @@ let emPausa = false;
 let pausaRestante = 0;
 let tempoEstudoDecorrido = 0;
 
+// ✅ Variáveis de timestamp para cálculo por tempo real
+let startTimestamp = null;
+let segundosAoRetomar = null;
+let pausaStartTimestamp = null;
+let pausaSegundosAoIniciar = null;
+let studyBlockStart = null;
+
 function formatarTempo(segundos) {
     const h = Math.floor(segundos / 3600);
     const m = Math.floor((segundos % 3600) / 60);
@@ -53,6 +60,7 @@ function setEstado(estado) {
     elRing.className = 'progress-fill ' + (estado === 'done' ? 'done' : '');
     elDot.className = 'dot ' + estado;
 }
+
 function formatarDuracao(minutos) {
     const h = Math.floor(minutos / 60);
     const m = minutos % 60;
@@ -62,15 +70,8 @@ function formatarDuracao(minutos) {
         const textoMin = m === 1 ? "1 minuto" : `${m} minutos`;
         return `${textoHora} e ${textoMin}`;
     }
-
-    if (h > 0) {
-        return h === 1 ? "1 hora" : `${h} horas`;
-    }
-
-    if (m > 0) {
-        return m === 1 ? "1 minuto" : `${m} minutos`;
-    }
-
+    if (h > 0) return h === 1 ? "1 hora" : `${h} horas`;
+    if (m > 0) return m === 1 ? "1 minuto" : `${m} minutos`;
     return "Definir tempo";
 }
 
@@ -83,11 +84,11 @@ function iniciar() {
         const minutos = Math.floor((restante % 3600000) / 60000);
         elStatus.textContent = `⚠ Descanso obrigatório: faltam ${horas}h ${minutos}min`;
         mostrarDescanso(restante);
-
         elBtnIniciar.disabled = true;
         elBtnReset.disabled = true;
         return;
     }
+
     const valor = document.getElementById('tempo').value.trim();
     const unidade = document.querySelector('input[name="unidade"]:checked').value;
 
@@ -100,7 +101,6 @@ function iniciar() {
 
     let totalMinutos = 0;
 
-    // Caso seja lista separada por ";"
     if (valor.includes(";")) {
         const partes = valor.split(";");
         partes.forEach(p => {
@@ -109,16 +109,12 @@ function iniciar() {
                 totalMinutos += (unidade === "hora") ? num * 60 : num;
             }
         });
-    }
-    // Caso seja formato H:MM
-    else if (valor.includes(":")) {
+    } else if (valor.includes(":")) {
         const partes = valor.split(":");
         const horas = parseInt(partes[0]) || 0;
         const minutos = parseInt(partes[1]) || 0;
         totalMinutos = (horas * 60) + minutos;
-    }
-    // Caso seja número simples
-    else {
+    } else {
         const num = parseInt(valor);
         totalMinutos = (unidade === "hora") ? num * 60 : num;
     }
@@ -130,6 +126,11 @@ function iniciar() {
     pausaRestante = 0;
     document.querySelector(".descanso-timer").style.display = "none";
 
+    // ✅ Marca o início pelo tempo real
+    startTimestamp = Date.now();
+    segundosAoRetomar = segundosRestantes;
+    studyBlockStart = Date.now();
+
     somInicio.play().catch(() => { });
     setEstado('running');
     elStatus.textContent = `sessão de ${formatarTempo(totalSegundos)} iniciada`;
@@ -139,8 +140,7 @@ function iniciar() {
     elBtnReset.disabled = true;
     atualizarRing(segundosRestantes, totalSegundos);
 
-    timer = setInterval(atualizar, 1000);
-
+    timer = setInterval(atualizar, 500); // ✅ Intervalo menor para maior precisão visual
 }
 
 function encerrarCronometro() {
@@ -155,7 +155,6 @@ function encerrarCronometro() {
     elBtnIniciar.onclick = iniciar;
     document.querySelector(".descanso-timer").style.display = "none";
 
-    // só incrementa se a sessão teve pelo menos 30 min
     if (totalSegundos >= 30 * 60) {
         sessoes = Math.min(sessoes + 1, MAX_SESSOES);
         ciclos = Math.min(ciclos + 1, MAX_CICLOS);
@@ -163,7 +162,6 @@ function encerrarCronometro() {
         atualizarCiclos();
     }
 
-    // descanso obrigatório a cada 6 sessões
     if (sessoes % 6 === 0 && sessoes > 0) {
         ultimoDescanso = Date.now();
         localStorage.setItem("ultimoDescanso", ultimoDescanso);
@@ -179,8 +177,11 @@ function encerrarCronometro() {
 }
 
 function atualizar() {
-    // O tempo principal continua diminuindo independentemente se é pausa ou estudo
-    segundosRestantes--;
+    const agora = Date.now();
+
+    // ✅ Calcula pelo tempo real, não por contagem de ticks
+    segundosRestantes = Math.max(0, segundosAoRetomar - Math.floor((agora - startTimestamp) / 1000));
+
     elContador.textContent = formatarTempo(segundosRestantes);
     atualizarRing(segundosRestantes, totalSegundos);
 
@@ -190,22 +191,24 @@ function atualizar() {
     }
 
     if (emPausa) {
-        pausaRestante--;
+        // ✅ Pausa também calculada por tempo real
+        pausaRestante = Math.max(0, pausaSegundosAoIniciar - Math.floor((agora - pausaStartTimestamp) / 1000));
         atualizarDisplayPausa(pausaRestante);
 
         if (pausaRestante <= 0) {
             emPausa = false;
-            tempoEstudoDecorrido = 0; // Zera para o próximo bloco de estudo
+            tempoEstudoDecorrido = 0;
+            studyBlockStart = Date.now(); // ✅ Reinicia bloco de estudo
             document.querySelector(".descanso-timer").style.display = "none";
             somFim.play().catch(() => { });
-            
+
             setEstado('running');
             if (segundosRestantes <= 30 * 60) {
                 elStatus.textContent = "Última sessão para finalizar seu estudo de hoje!";
             } else {
                 elStatus.textContent = "Sessão de foco retomada";
             }
-            
+
             ciclos++;
             atualizarCiclos();
             if (ciclos >= MAX_CICLOS) {
@@ -213,9 +216,9 @@ function atualizar() {
             }
         }
     } else {
-        tempoEstudoDecorrido++;
+        // ✅ Tempo de estudo calculado por tempo real
+        tempoEstudoDecorrido = Math.floor((agora - studyBlockStart) / 1000);
 
-        // Inicia a pausa após 30 minutos (1800 segundos) de estudo
         if (tempoEstudoDecorrido > 0 && tempoEstudoDecorrido % (30 * 60) === 0) {
             if (segundosRestantes <= 14 * 60) {
                 encerrarCronometro();
@@ -231,11 +234,16 @@ function atualizar() {
 function iniciarPausa(duracaoSegundos) {
     emPausa = true;
     pausaRestante = duracaoSegundos;
+
+    // ✅ Marca início da pausa pelo tempo real
+    pausaStartTimestamp = Date.now();
+    pausaSegundosAoIniciar = duracaoSegundos;
+
     setEstado('pause');
     const m = Math.floor(duracaoSegundos / 60);
     elStatus.textContent = `Pausa de ${m} minutos...`;
     somInicio.play().catch(() => { });
-    
+
     document.querySelector(".descanso-timer").style.display = "flex";
     atualizarDisplayPausa(pausaRestante);
 }
@@ -250,6 +258,13 @@ function atualizarDisplayPausa(segundos) {
 function pausar() {
     clearInterval(timer);
     timer = null;
+
+    // ✅ Salva o estado atual para retomar do ponto correto
+    segundosAoRetomar = segundosRestantes;
+    if (emPausa) {
+        pausaSegundosAoIniciar = pausaRestante;
+    }
+
     setEstado('inactive');
     setEstado('pause');
     elStatus.textContent = '— sessão pausada —';
@@ -263,10 +278,8 @@ function atualizarCiclos() {
 }
 
 function retomar() {
-    // recupera do localStorage
     ultimoDescanso = parseInt(localStorage.getItem("ultimoDescanso")) || null;
 
-    // verifica se ainda está dentro do descanso obrigatório
     if (ultimoDescanso && Date.now() - ultimoDescanso < 2 * 60 * 60 * 1000) {
         const restante = 2 * 60 * 60 * 1000 - (Date.now() - ultimoDescanso);
         const horas = Math.floor(restante / 3600000);
@@ -278,7 +291,6 @@ function retomar() {
         return;
     }
 
-    // se contador já está zerado, volta para estado inicial
     if (segundosRestantes <= 0 || totalSegundos <= 0) {
         clearInterval(timer);
         timer = null;
@@ -289,22 +301,27 @@ function retomar() {
         elBtnIniciar.onclick = iniciar;
         elBtnIniciar.disabled = false;
         elBtnReset.disabled = true;
-
-        // limpa input
         document.getElementById('tempo').value = "";
         return;
     }
 
-    // se não estiver em descanso e ainda há tempo, retoma normalmente
+    // ✅ Reinicia os timestamps a partir do estado salvo
+    startTimestamp = Date.now();
+    if (emPausa) {
+        pausaStartTimestamp = Date.now();
+    } else {
+        studyBlockStart = Date.now() - (tempoEstudoDecorrido * 1000);
+    }
+
     setEstado(emPausa ? 'pause' : 'running');
     elStatus.textContent = emPausa ? "Pausa retomada" : `sessão de ${formatarTempo(totalSegundos)} retomada`;
     elBtnIniciar.textContent = 'Pausar';
     elBtnIniciar.onclick = pausar;
-    timer = setInterval(atualizar, 1000);
+    elBtnReset.disabled = true;
+    timer = setInterval(atualizar, 500);
 }
 
 function resetar() {
-    // se ainda estiver dentro das 2h de descanso, bloqueia
     if (ultimoFim && Date.now() - ultimoFim < 2 * 60 * 60 * 1000) {
         elStatus.textContent = '⚠ Reset bloqueado: Para Descanso Obrigatório';
         elBtnReset.disabled = true;
@@ -320,22 +337,25 @@ function resetar() {
     ciclos = 0;
     emPausa = false;
     pausaRestante = 0;
+    startTimestamp = null;
+    segundosAoRetomar = null;
+    pausaStartTimestamp = null;
+    pausaSegundosAoIniciar = null;
+    studyBlockStart = null;
     document.querySelector(".descanso-timer").style.display = "none";
 
     atualizarSessoes();
     atualizarCiclos();
 
-    //setEstado('done');
     elContador.textContent = '00:00';
     elStatus.textContent = '— Aguardando início —';
     elBtnIniciar.textContent = 'Iniciar';
     elBtnIniciar.onclick = iniciar;
-    setEstado('inactive');         // volta para estado inicial
-    elBtnIniciar.disabled = false; // garante que o botão volta ativo
+    setEstado('inactive');
+    elBtnIniciar.disabled = false;
     document.getElementById('tempo').value = "";
     elRing.style.strokeDashoffset = CIRCUNF;
     elBtnReset.disabled = true;
-    
 }
 
 function atualizarSessoes() {
@@ -352,7 +372,6 @@ function finalizarEstudo() {
     clearInterval(timer);
     timer = null;
 
-    // calcula total de horas estudadas (cada ciclo = 30 min = 0.5h)
     const horasEstudadas = (ciclos * 30) / 60;
 
     setEstado('done');
@@ -363,13 +382,11 @@ function finalizarEstudo() {
     elBtnIniciar.onclick = iniciar;
     elBtnReset.disabled = true;
 
-    // zera para próxima rodada
     sessoes = 0;
     ciclos = 0;
     atualizarSessoes();
     atualizarCiclos();
 
-    // salva timestamp para descanso obrigatório
     ultimoFim = Date.now();
     localStorage.setItem("ultimoFim", ultimoFim);
 }
@@ -391,14 +408,12 @@ function mostrarDescanso(restanteMs) {
             elBtnReset.disabled = false;
             clearInterval(intervaloDescanso);
         }
-        restanteMs -= 1000; // atualiza a cada segundo
+        restanteMs -= 1000;
     }
 
     atualizarTimer();
     const intervaloDescanso = setInterval(atualizarTimer, 1000);
 }
-
-
 
 // Init ring
 elRing.style.strokeDasharray = CIRCUNF;
